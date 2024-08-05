@@ -112,6 +112,7 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         bytes calldata
     ) external override onlyByPoolManager returns (bytes4) {
         // TODO
+        lastTicks[key.toId()] = tick;
         return this.afterInitialize.selector;
     }
 
@@ -122,13 +123,94 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         BalanceDelta,
         bytes calldata
     ) external override onlyByPoolManager returns (bytes4, int128) {
-        // TODO
+        // NOTE: Don't allow recurring calls and reentrancy
+        if (sender == address(this)) return (this.afterSwap.selector, 0);
+        // NOTE: Fulfill orders
+        // 1. calculate tick shift range
+        // 2. find out first order within tick shift range that we can fill
+        // 3. fill order
+        // 4. go back to step 1
+
+        bool tryMore = true; // Try to fill more orders or not
+        int24 currentTick;
+
+        while (tryMore) {
+            // While we know we should try to fill another order, we need to...
+            // We will try a function, `tryExecutingOrder`
+            // Returns a new value for tryMore and returns a new value for currentTick
+            // Core idea is `tryExecutingOrder` will try to find the first order we can fill
+            // we cause a price shift if we will it, tryMore = true, get new current shift
+            // if we dont have orders to fill, then we return tryMore = false, with currentTick
+
+            // If bob id a zeroForOne swap, we need orders in the opposite direction (oneForZero)
+            // If bob did a oneForZero swap, we need orders in the opposite direction (zeroForOne)
+            (tryMore, currentTick) = tryExecutingOrder(
+                key,
+                // The direction of orders to look for
+                !params.zeroForOne
+            );
+        }
+        lastTicks[key.toId()] = currentTick;
         return (this.afterSwap.selector, 0);
     }
 
-    // Write the redeem function
-    // Write the executeOrder function
-    // Write the swapAndSettleBalances function
+    function tryExecutingOrders(
+        PoolKey calldata key,
+        bool executeZeroForOne
+    ) internal returns (bool tryMore, int24 newTick) {
+        // CoW:
+        // if alice wants to sell 1 eth at 3600, current price maybe 3500
+        // bob places swap to buy 1 eth and slippge requirements are designed such that
+        // he's willing to pay up to 3600
+        // in before swap you can just trade alice and bob's orders
+        // But:
+        // we will get current tick from pool
+        (, int24 currentTick, , ) = poolManager.getSlot0(key.toId());
+        // NOTE: We pass in pool id
+        int24 lastTick = lastTicks[key.toId()];
+
+        if (currentTick > lastTick) {
+            // loop over all tick values, from last tick to current tick
+            // try to find and entry in our pending orders mapping
+            // where input amount > 0 (i.e. we haev something we need to swap)
+
+            // SIDENOTE: this is why it helps a lot to place orders on known tick values
+            // "valid" / "usable" ticks
+
+            for (
+                int24 tick = lastTick;
+                tick <= currentTick;
+                tick += key.tickSpacing
+            ) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][
+                    executeZeroForOne
+                ];
+
+                if (inputAmount > 0) {
+                    // we have an order to fill
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        } else {
+            for (
+                int24 tick = lastTick;
+                tick > currentTick;
+                tick -= key.tickSpacing
+            ) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][
+                    executeZeroForOne
+                ];
+
+                if (inputAmount > 0) {
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        }
+
+        return (false, currentTick);
+    }
 
     function getLowerUsableTick(
         int24 tick,

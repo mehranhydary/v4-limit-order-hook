@@ -41,6 +41,28 @@ When do these tick values change? When trades take place
    2.1. When Alice places her order, ideally - she should also set some sort of slippages (sort of min token B to get back)
 3. We are not gonna support pools that have native ETH . token as one of the currencies. We only support ERC-20:ERC20 pools.
 
+# Mechanism Design continued
+
+Prices are shifted every tiem a swap happens. We stubbted `afterSwap`. We need to calculate some sort of tick shift range. What was the last known tick? What is the new tick?
+
+-   Hint #1: We need a way to keep track of the last known ticks
+
+Something to be careful of:
+
+-   Since we are executing a swap inside of `afterSwap`
+    -> Swap will trigger `afterSwap` again
+    -> This sort of reentrancy and recursion should not happen
+    -> `afterSwap` should not be triggered if it is being entered because of us
+
+-   As we are fulfilling our ordes, our orders are also causing a price shift
+
+Example: Alice has an order to sell 5 ETH at 3000 USDC each, current price is like 2950
+Bob does a swap to buy ETH which shifts price enough to make it 1 ETH = 3050 USDC
+
+At this point, we will trigger Alice's order but fulfilling Alice's order will move the price back down
+
+The problem that is caused by this, if we have multiple orders that exist in the original tick shift range (e.g. tick is 500, we have orders at tick 550 and 540, Bob does a swap, moves tick up to 600, enables 2 orders at range 550, 540, it is possible that the new tick before order 1 pushes 540 out of range again)
+
 ## Usage
 
 ### Build
