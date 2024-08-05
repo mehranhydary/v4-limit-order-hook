@@ -67,6 +67,8 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
     mapping(uint256 orderId => uint256 outputClaimable)
         public claimableOutputTokens;
 
+    mapping(PoolId poolId => int24 lastTick) public lastTicks;
+
     // Errors
     error InvalidOrder();
     error NothingToClaim();
@@ -154,7 +156,7 @@ contract TakeProfitsHook is BaseHook, ERC1155 {
         return (this.afterSwap.selector, 0);
     }
 
-    function tryExecutingOrders(
+    function tryExecutingOrder(
         PoolKey calldata key,
         bool executeZeroForOne
     ) internal returns (bool tryMore, int24 newTick) {

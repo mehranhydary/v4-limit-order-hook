@@ -174,6 +174,71 @@ contract TakeProfitsHookTest is Test, Deployers {
         assertEq(tokenBalance, 0);
     }
 
+    /**
+        ETH/USDC
+
+        1. Place a limit ordre in the directino of zeroForOne (sell ETH) 
+        -> make second user buy eth such that price shifts up
+        -> check if our limit order was executed
+
+        2. Place limit order in direction of oneForZero (buy ETH)
+
+        3. Place two limit orders at separate ticks
+        -> make a second user swap such that price shfits by a bit 
+        -> but only enough such that one of the orders can be executed 
+
+        4. Place two limit orders at separate ticks
+        -> make a second user swap such that price shifts a lot 
+        -> both orders get executed
+     */
+
+    function test_orderExecute_zeroForOne() public {
+        int24 tick = 100;
+        uint256 amount = 1 ether;
+        bool zeroForOne = true;
+
+        int24 tickLower = hook.placeOrder(key, tick, zeroForOne, amount);
+
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: false,
+            amountSpecified: -1 ether,
+            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+        });
+
+        swapRouter.swap(
+            key,
+            params,
+            PoolSwapTest.TestSettings({
+                takeClaims: false,
+                settleUsingBurn: false
+            }),
+            ZERO_BYTES
+        );
+
+        uint256 pendingTokensForOrder = hook.pendingOrders(
+            key.toId(),
+            tickLower,
+            zeroForOne
+        );
+
+        assertEq(pendingTokensForOrder, 0);
+
+        uint256 orderId = hook.getOrderId(key, tickLower, zeroForOne);
+        uint256 claimableOutputTokens = hook.claimableOutputTokens(orderId);
+        uint256 hookContractToken1Balance = token1.balanceOf(address(hook));
+
+        assertEq(hookContractToken1Balance, claimableOutputTokens);
+
+        uint256 ourOriginalToken1Balance = token1.balanceOfSelf();
+        hook.redeem(key, tickLower, zeroForOne, amount);
+        uint256 ourNewToken1Balance = token1.balanceOfSelf();
+
+        assertEq(
+            ourNewToken1Balance - ourOriginalToken1Balance,
+            claimableOutputTokens
+        );
+    }
+
     function onERC1155Received(
         address,
         address,
